@@ -1,9 +1,9 @@
 module Main where
 
-import Data.Time.Clock (UTCTime, NominalDiffTime, diffUTCTime, getCurrentTime)
+import Data.Time.Clock (UTCTime, getCurrentTime)
 import Control.Concurrent (threadDelay)
-import Control.Monad (forM_, foldM)
-import System.Random (RandomGen, newStdGen, randomR)
+import System.IO (hFlush, stdout)
+import System.Timeout (timeout)
 
 data Auction = Auction
     { currentPrice   :: Double
@@ -11,72 +11,74 @@ data Auction = Auction
     , bidCount       :: Int
     }
 
--- Function to round a Double to 2 decimal places
-roundToTwo :: Double -> Double
-roundToTwo x = fromIntegral (round (x * 100)) / 100
+-- Countdown function to inform the user
+countdown :: Int -> IO ()
+countdown 0 = return ()
+countdown n = do
+    putStrLn $ "You have " ++ show n ++ " seconds to bid."
+    threadDelay 1000000  -- Wait for 1 second
+    countdown (n - 1)
 
--- Function to update the price based on bidding history
-updatePrice :: Auction -> IO Auction
-updatePrice auction = do
+-- Countdown and input function
+countdownAndGetInput :: Int -> IO (Maybe String)
+countdownAndGetInput seconds = do
+    let timer = countdown seconds
+    result <- timeout (seconds * 1000000) getLine  -- Timeout in microseconds
+    timer `seq` return result  -- Ensure countdown completes while waiting for input
+
+-- Function to handle bidding with keyboard input and countdown
+processBids :: Auction -> IO ()
+processBids auction = do
+    putStrLn $ "Current auction price: " ++ show (currentPrice auction) ++ "\n"
+    putStr "Enter your bid amount (or type 'yes' to auto-bid +5, or 'exit' to end the auction): "
+    hFlush stdout
+    input <- countdownAndGetInput 10  -- 10-second timeout with countdown
     now <- getCurrentTime
-    let timeElapsed = diffUTCTime now (lastBidTime auction)
-    let newBidCount = bidCount auction + 1
-    let newPrice = calculateNewPrice (currentPrice auction) timeElapsed newBidCount
-    return $ auction { currentPrice = newPrice, lastBidTime = now, bidCount = newBidCount }
+    case input of
+        Nothing -> do
+            -- Auction ends due to inactivity
+            putStrLn $ "Auction ended due to inactivity. Product sold at last bid price: " ++ show (currentPrice auction)
+        Just inputLine -> case inputLine of
+            "exit" -> putStrLn $ "Auction ended by user. Product sold at last bid price: " ++ show (currentPrice auction)
+            "yes" -> do
+                let newBid = currentPrice auction + 5
+                let newAuction = auction 
+                        { currentPrice = newBid
+                        , lastBidTime = now
+                        , bidCount = bidCount auction + 1 
+                        }
+                putStrLn $ "Auto-bid accepted! New price: " ++ show (currentPrice newAuction)
+                processBids newAuction
+            _ -> do
+                let maybeBid = readMaybe inputLine :: Maybe Double
+                case maybeBid of
+                    Just bid ->
+                        if bid > currentPrice auction
+                            then do
+                                let newAuction = auction 
+                                        { currentPrice = bid
+                                        , lastBidTime = now
+                                        , bidCount = bidCount auction + 1 
+                                        }
+                                putStrLn $ "Bid accepted! New price: " ++ show (currentPrice newAuction)
+                                processBids newAuction
+                            else do
+                                putStrLn "Bid must be higher than the current price. Try again."
+                                processBids auction
+                    Nothing -> do
+                        putStrLn "Invalid input. Please enter a numeric value."
+                        processBids auction
 
--- Dynamic pricing logic
-calculateNewPrice :: Double -> NominalDiffTime -> Int -> Double
-calculateNewPrice price timeElapsed bidCount
-    | bidCount >= 5 && timeElapsed < 10 = roundToTwo (price * 1.05)  -- Increase price by 5% if many bids quickly
-    | bidCount < 5 && timeElapsed > 10 = roundToTwo (price - 5.0)  -- Decrease price by a fixed amount if no bids for over 10 seconds
-    | otherwise = roundToTwo price  -- No change
+-- Helper function to safely parse a string into a number
+readMaybe :: Read a => String -> Maybe a
+readMaybe s = case reads s of
+    [(val, "")] -> Just val
+    _ -> Nothing
 
--- Function to simulate multiple bids
-simulateBids :: Int -> Auction -> IO Auction
-simulateBids 0 currentAuction = return currentAuction  -- Base case for recursion
-simulateBids n currentAuction = do
-    updatedAuction <- updatePrice currentAuction
-    putStrLn $ "New auction price after bid " ++ show (bidCount updatedAuction) ++ ": " ++ show (currentPrice updatedAuction)
-    -- Wait for a short period before the next bid
-    threadDelay 1000000  -- 1 second delay
-    simulateBids (n - 1) updatedAuction
-
--- Function to gradually decrease the price
-decreasePrice :: Auction -> IO Auction
-decreasePrice auction' = do
-    -- Generate a random decrease amount
-    gen <- newStdGen
-    let (randomDecrease, _) = randomR (1, 5) gen  -- Random decrease between 1 and 5
-    let decreasedPrice = roundToTwo (currentPrice auction' - (5 + randomDecrease))  -- Reduce price by random amount
-    let newAuction = auction' { currentPrice = max 0 decreasedPrice }  -- Ensure price does not go below 0
-    putStrLn $ "New auction price after inactivity: " ++ show (currentPrice newAuction)
-    threadDelay 1000000  -- Delay for 1 second before the next decrease
-    return newAuction
-
--- Sample main function to demonstrate the auction price update
+-- Main function to start the auction
 main :: IO ()
 main = do
     initialTime <- getCurrentTime
     let auction = Auction { currentPrice = 100.0, lastBidTime = initialTime, bidCount = 0 }
-
-    -- Simulate the first 17 bids and get the final auction state
-    finalAuction <- simulateBids 17 auction
-
-    -- Now simulate inactivity for a while to see the price decrease
-    putStrLn "No bids for a while..."
-
-    -- Number of decreases (set to 5)
-    let numDecreases = 5  -- Decrease the price 5 times
-
-    -- Use a loop to decrease the price for the specified number of times
-    auctionWithDecreasedPrice <- foldM (\auction' _ -> decreasePrice auction') finalAuction [1..numDecreases] 
-
-    -- Resume bidding after the inactivity
-    putStrLn "Bidding resumes..."
-    
-    -- Simulate more bids (set to 7)
-    finalAuctionAfterBids <- simulateBids 7 auctionWithDecreasedPrice
-
-    putStrLn $ "Final auction price after resuming bids: " ++ show (currentPrice finalAuctionAfterBids)
-
-    return ()
+    putStrLn "Starting the auction..."
+    processBids auction
