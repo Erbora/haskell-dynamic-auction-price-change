@@ -11,6 +11,10 @@ data Auction = Auction
     , bidCount       :: Int
     }
 
+-- Function to round a Double to 2 decimal places
+roundToTwo :: Double -> Double
+roundToTwo x = fromIntegral (round (x * 100)) / 100
+
 -- Function to update the price based on bidding history
 updatePrice :: Auction -> IO Auction
 updatePrice auction = do
@@ -23,9 +27,9 @@ updatePrice auction = do
 -- Dynamic pricing logic
 calculateNewPrice :: Double -> NominalDiffTime -> Int -> Double
 calculateNewPrice price timeElapsed bidCount
-    | bidCount >= 5 && timeElapsed < 10 = price * 1.05  -- Increase price by 5% if many bids quickly
-    | bidCount < 5 && timeElapsed > 10 = price - 5.0  -- Decrease price by a fixed amount if no bids for over 10 seconds
-    | otherwise = price  -- No change
+    | bidCount >= 5 && timeElapsed < 10 = roundToTwo (price * 1.05)  -- Increase price by 5% if many bids quickly
+    | bidCount < 5 && timeElapsed > 10 = roundToTwo (price - 5.0)  -- Decrease price by a fixed amount if no bids for over 10 seconds
+    | otherwise = roundToTwo price  -- No change
 
 -- Function to simulate multiple bids
 simulateBids :: Int -> Auction -> IO Auction
@@ -43,7 +47,7 @@ decreasePrice auction' = do
     -- Generate a random decrease amount
     gen <- newStdGen
     let (randomDecrease, _) = randomR (1, 5) gen  -- Random decrease between 1 and 5
-    let decreasedPrice = currentPrice auction' - (5 + randomDecrease)  -- Reduce price by random amount
+    let decreasedPrice = roundToTwo (currentPrice auction' - (5 + randomDecrease))  -- Reduce price by random amount
     let newAuction = auction' { currentPrice = max 0 decreasedPrice }  -- Ensure price does not go below 0
     putStrLn $ "New auction price after inactivity: " ++ show (currentPrice newAuction)
     threadDelay 1000000  -- Delay for 1 second before the next decrease
